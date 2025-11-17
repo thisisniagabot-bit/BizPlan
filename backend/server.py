@@ -1,3 +1,4 @@
+from contextlib import asynccontextmanager
 from fastapi import FastAPI, APIRouter
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
@@ -6,21 +7,29 @@ import os
 import logging
 from pathlib import Path
 from pydantic import BaseModel, Field, ConfigDict
-from typing import List
+from typing import List, Optional
 import uuid
 from datetime import datetime, timezone
+import sys
 
 
-ROOT_DIR = Path(__file__).parent
-load_dotenv(ROOT_DIR / '.env')
+# Load environment variables
+if os.path.exists('.env'):
+    load_dotenv()
 
 # MongoDB connection
-mongo_url = os.environ['MONGO_URL']
+mongo_url = os.environ.get('MONGO_URL', 'mongodb://localhost:27017')
 client = AsyncIOMotorClient(mongo_url)
-db = client[os.environ['DB_NAME']]
+db = client[os.environ.get('DB_NAME', 'bizplan_db')]
 
 # Create the main app without a prefix
-app = FastAPI()
+app = FastAPI(
+    title="BizPlan Pro API",
+    description="API for the BizPlan Pro business planning platform",
+    version="1.0.0",
+    docs_url="/api/docs",
+    redoc_url="/api/redoc"
+)
 
 # Create a router with the /api prefix
 api_router = APIRouter(prefix="/api")
@@ -69,21 +78,30 @@ async def get_status_checks():
 # Include the router in the main app
 app.include_router(api_router)
 
+# Add CORS middleware with more secure configuration for production
 app.add_middleware(
     CORSMiddleware,
     allow_credentials=True,
-    allow_origins=os.environ.get('CORS_ORIGINS', '*').split(','),
+    allow_origins=os.environ.get('CORS_ORIGINS', 'http://localhost:3000,http://localhost:3001').split(','),
     allow_methods=["*"],
     allow_headers=["*"],
+    allow_origin_regex=r"https?://.*\.vercel\.app(/.*)?"  # Allow Vercel preview deployments
 )
 
 # Configure logging
 logging.basicConfig(
-    level=logging.INFO,
+    level=os.environ.get("LOG_LEVEL", "INFO"),
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
 
-@app.on_event("shutdown")
-async def shutdown_db_client():
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Startup
+    logger.info("Starting up...")
+    yield
+    # Shutdown
+    logger.info("Shutting down...")
     client.close()
+
+app.lifespan = lifespan
